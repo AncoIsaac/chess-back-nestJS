@@ -32,7 +32,7 @@ A real-time multiplayer chess game built with NestJS and Socket.IO for the backe
 
 1. Clone the repository
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/AncoIsaac/chess-back-nestJS.git
 cd socket-io
 ```
 2. Install dependencies
