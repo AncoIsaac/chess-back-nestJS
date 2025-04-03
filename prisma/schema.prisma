@@ -13,17 +13,80 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Game {
-  id       String   @id @default(uuid())
-  fen      String   @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-  moves    String[]
-  status   GameStatus @default(WAITING)
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  username  String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  wins      Int      @default(0)
+  losses    Int      @default(0)
+  draws     Int      @default(0)
+  
+  // Relationships
+  gamesAsPlayer1 Game[] @relation("Player1Games")
+  gamesAsPlayer2 Game[] @relation("Player2Games")
+  sentChallenges Challenge[] @relation("SentChallenges")
+  receivedChallenges Challenge[] @relation("ReceivedChallenges")
+}
+
+model Game {
+  id        String   @id @default(uuid())
+  fen       String   @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+  pgn       String?
+  moves     String[]
+  status    GameStatus @default(WAITING)
+  result    GameResult?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  startedAt DateTime?
+  endedAt   DateTime?
+  
+  // Relationships
+  player1   User     @relation("Player1Games", fields: [player1Id], references: [id])
+  player1Id String
+  player2   User?    @relation("Player2Games", fields: [player2Id], references: [id])
+  player2Id String?
+  
+  // Indexes
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([status])
 }
 
 enum GameStatus {
   WAITING
   IN_PROGRESS
+  ABANDONED
   FINISHED
+}
+
+enum GameResult {
+  WHITE_WIN
+  BLACK_WIN
+  DRAW
+}
+
+model Challenge {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  status      ChallengeStatus @default(PENDING)
+  
+  // Relationships
+  challenger  User     @relation("SentChallenges", fields: [challengerId], references: [id])
+  challengerId String
+  challenged  User     @relation("ReceivedChallenges", fields: [challengedId], references: [id])
+  challengedId String
+  
+  // Indexes
+  @@index([challengerId])
+  @@index([challengedId])
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
 }
