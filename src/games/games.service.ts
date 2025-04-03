@@ -26,34 +26,42 @@ export class GamesService {
     const game = await this.prisma.game.findUnique({
       where: { id: gameId },
     });
-
-    if (!game) {
-      throw new Error('Game not found');
+  
+    if (!game) throw new Error('Game not found');
+  
+    // If user is already player1 or player2, just return the game
+    if (game.player1Id === data.playerId || game.player2Id === data.playerId) {
+      return game;
     }
-
-    if (game.player1Id === data.playerId) {
-      throw new HttpException({
-        status: HttpStatus.CONFLICT,
-        error: 'Cannot play against yourself',
-      }, HttpStatus.CONFLICT);
-      // throw new Error('Cannot play against yourself');
+  
+    // If game already has two players
+    if (game.player1Id && game.player2Id) {
+      throw new HttpException(
+        'Game is full',
+        HttpStatus.FORBIDDEN
+      );
     }
-
-    if (game.player2Id && game.player2Id !== data.playerId) {
-      throw new Error('Game already has two players');
+  
+    // Assign as player2 if player1 exists but player2 doesn't
+    if (game.player1Id && !game.player2Id) {
+      return this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          player2Id: data.playerId,
+          status: 'IN_PROGRESS',
+          startedAt: new Date(),
+        }
+      });
     }
-
+  
+    // Otherwise assign as player1
     return this.prisma.game.update({
       where: { id: gameId },
       data: {
-        player2Id: data.playerId,
-        status: 'IN_PROGRESS',
-        startedAt: new Date(),
-      },
-      include: {
-        player1: true,
-        player2: true,
-      },
+        player1Id: data.playerId,
+        status: game.player2Id ? 'IN_PROGRESS' : 'WAITING',
+        startedAt: game.player2Id ? new Date() : undefined,
+      }
     });
   }
 

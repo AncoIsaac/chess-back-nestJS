@@ -9,7 +9,8 @@ import { Server, Socket } from 'socket.io';
 import { GamesService } from './games.service';
 import { MoveDto } from './dto/move.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Chess } from 'chess.js';
+import { Chess, Square } from 'chess.js';
+import { Game } from '@prisma/client';
 
 @WebSocketGateway()
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -33,73 +34,105 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const sockets = this.gameSockets.get(gameId);
       if (sockets) {
         sockets.delete(client.id);
+        console.log(
+          `Player disconnected from game ${gameId}. Remaining: ${sockets.size}`,
+        );
+
         if (sockets.size === 0) {
           this.gameSockets.delete(gameId);
+        } else {
+          // Notify remaining players
+          this.server.to(gameId).emit('playerDisconnected', {
+            message: 'Opponent has disconnected',
+          });
         }
       }
 
-      // Mark game as abandoned if it was in progress
-      await this.prisma.game.updateMany({
-        where: {
-          id: gameId,
-          status: 'IN_PROGRESS',
-        },
-        data: {
-          status: 'ABANDONED',
-          endedAt: new Date(),
-        },
-      });
-
-      // Notify other player if there's still someone in the game
-      if (sockets && sockets.size > 0) {
-        this.server.to(gameId).emit('playerDisconnected', {
-          message: 'Opponent has disconnected',
-          gameStatus: 'ABANDONED',
-        });
-      }
+      // Clean up game if needed
+      await this.cleanupGameIfEmpty(gameId);
     }
     this.playerGames.delete(client.id);
   }
 
+  private async cleanupGameIfEmpty(gameId: string) {
+    const sockets = this.gameSockets.get(gameId);
+    if (!sockets || sockets.size === 0) {
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: { status: 'ABANDONED' },
+      });
+      this.gameSockets.delete(gameId);
+    }
+  }
+
   @SubscribeMessage('joinGame')
-  async handleJoinGame(client: Socket, payload: { gameId: string; userId: string }) {
+  async handleJoinGame(
+    client: Socket,
+    payload: { gameId: string; userId: string },
+  ) {
     try {
-      const game = await this.gamesService.joinGame(payload.gameId, { playerId: payload.userId });
-  
+      // Check for existing connections from this user
+      const existingConnections = Array.from(this.playerGames.entries())
+        .filter(([_, gameId]) => gameId === payload.gameId)
+        .map(([socketId, _]) => socketId);
+
+      // Disconnect previous sockets from this user in this game
+      existingConnections.forEach((socketId) => {
+        if (socketId !== client.id) {
+          this.server.sockets.sockets.get(socketId)?.disconnect();
+        }
+      });
+
+      const game = await this.gamesService.joinGame(payload.gameId, {
+        playerId: payload.userId,
+      });
+
+      // Track connection
       this.playerGames.set(client.id, payload.gameId);
-  
       if (!this.gameSockets.has(payload.gameId)) {
         this.gameSockets.set(payload.gameId, new Set());
       }
       const gameSocketSet = this.gameSockets.get(payload.gameId);
-      gameSocketSet?.add(client.id);
-  
+      if (gameSocketSet) {
+        gameSocketSet.add(client.id);
+      }
+
       client.join(payload.gameId);
-  
+
+      // Determine player color
       const playerColor = game.player1Id === payload.userId ? 'w' : 'b';
       const chess = new Chess(game.fen);
-  
-      // Send initial state to joining player
+      const gameSockets = this.gameSockets.get(payload.gameId);
+      const opponentConnected = gameSockets ? true : false;
+
+      console.log('opp', opponentConnected);
+
+      // Send game state
       client.emit('gameState', {
         fen: game.fen,
         playerColor,
         status: game.status,
-        opponentConnected: gameSocketSet ? gameSocketSet.size > 1 : false, // Include opponent status
-        currentTurn: chess.turn()
+        opponentConnected,
+        currentTurn: chess.turn(),
       });
-  
-      // Notify other players if there's already someone in the game
-      if (gameSocketSet && gameSocketSet.size > 1) {
-        // Send to all other clients in this game
+
+      // Notify others if opponent connected
+      if (opponentConnected) {
+        console.log('hola');
         client.to(payload.gameId).emit('playerConnected');
-        
-        // Also update the new player about existing connections
-        client.emit('playerConnected');
       }
-      console.log(`Player ${payload.userId} joined game ${payload.gameId}`);
-      console.log(`Current players in game: ${gameSocketSet?.size}`);
+
+      console.log(
+        `Player ${payload.userId} (${playerColor}) joined game ${payload.gameId}`,
+      );
+      // console.log(
+      //   `Current connections: ${this.gameSockets.get(payload.gameId) ?? 0}`,
+      // );
     } catch (error) {
-      client.emit('joinError', { message: error.message });
+      console.error('Join error:', error.message);
+      client.emit('joinError', {
+        message: error.response?.error || error.message,
+      });
     }
   }
 
@@ -108,63 +141,72 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client: Socket,
     payload: { gameId: string; move: MoveDto },
   ) {
-    
     try {
+      const gameId = this.playerGames.get(client.id);
+      if (!gameId) {
+        throw new Error('Player not found in game');
+      }
+  
       const updatedGame = await this.gamesService.makeMove(
         payload.gameId,
         payload.move,
       );
-      this.server.to(payload.gameId).emit('moveMade', updatedGame);
-
+      
+      const chess = new Chess(updatedGame.fen);
+      const sockets = this.gameSockets.get(payload.gameId);
+      const opponentConnected = sockets && sockets.size > 1;
+  
+      // Envía más información en el evento
+      this.server.to(payload.gameId).emit('moveMade', {
+        fen: updatedGame.fen,
+        status: updatedGame.status.toLowerCase(), // Asegura que coincida con el tipo en el frontend
+        opponentConnected,
+        currentTurn: chess.turn(),
+        // Agrega más datos si es necesario
+      });
+  
       if (updatedGame.status === 'FINISHED') {
-        // Update player stats
-        // await this.updatePlayerStats(updatedGame);
+        await this.updatePlayerStats(updatedGame);
       }
     } catch (error) {
       client.emit('moveError', { message: error.message });
     }
   }
 
-  // private async updatePlayerStats(game: Game) {
-  //   if (!game.result) return;
+  private async updatePlayerStats(game: Game) {
+    if (!game.result) return;
 
-  //   const updates = [];
+    const updates = [];
 
-  //   if (game.result === 'WHITE_WIN') {
-  //     updates.push(
-  //       this.prisma.user.update({
-  //         where: { id: game.player1Id },
-  //         data: { wins: { increment: 1 } }
-  //       }),
-  //       this.prisma.user.update({
-  //         where: { id: game.player2Id },
-  //         data: { losses: { increment: 1 } }
-  //       })
-  //     );
-  //   } else if (game.result === 'BLACK_WIN') {
-  //     updates.push(
-  //       this.prisma.user.update({
-  //         where: { id: game.player2Id },
-  //         data: { wins: { increment: 1 } }
-  //       }),
-  //       this.prisma.user.update({
-  //         where: { id: game.player1Id },
-  //         data: { losses: { increment: 1 } }
-  //       })
-  //     );
-  //   } else if (game.result === 'DRAW') {
-  //     updates.push(
-  //       this.prisma.user.update({
-  //         where: { id: game.player1Id },
-  //         data: { draws: { increment: 1 } }
-  //       }),
-  //       this.prisma.user.update({
-  //         where: { id: game.player2Id },
-  //         data: { draws: { increment: 1 } }
-  //       })
-  //     );
-  //   }
+    if (game.result === 'WHITE_WIN') {
+      await this.prisma.user.update({
+        where: { id: game.player1Id },
+        data: { wins: { increment: 1 } },
+      });
+      this.prisma.user.update({
+        where: { id: game.player2Id ?? undefined },
+        data: { losses: { increment: 1 } },
+      });
+    } else if (game.result === 'BLACK_WIN') {
+      await this.prisma.user.update({
+        where: { id: game.player2Id ?? undefined },
+        data: { wins: { increment: 1 } },
+      });
+      this.prisma.user.update({
+        where: { id: game.player1Id },
+        data: { losses: { increment: 1 } },
+      });
+    } else if (game.result === 'DRAW') {
+      this.prisma.user.update({
+        where: { id: game.player1Id },
+        data: { draws: { increment: 1 } },
+      });
+      this.prisma.user.update({
+        where: { id: game.player2Id ?? undefined },
+        data: { draws: { increment: 1 } },
+      });
+    }
 
-  //   await Promise.all(updates);
-  // }
+    await Promise.all(updates);
+  }
 }
