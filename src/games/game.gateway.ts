@@ -86,4 +86,50 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.emit('moveError', error.message);
     }
   }
+
+  // game.gateway.ts
+
+@SubscribeMessage('resignGame')
+async handleResign(client: Socket, gameId: string) {
+  try {
+    const playerColor = this.playerColors[client.id];
+    const game = await this.gameService.resignGame(gameId, playerColor);
+    this.server.to(gameId).emit('gameResigned', {
+      winner: playerColor === 'w' ? 'b' : 'w',
+      reason: 'resignation'
+    });
+  } catch (error) {
+    client.emit('gameError', error.message);
+  }
+}
+
+@SubscribeMessage('offerDraw')
+async handleOfferDraw(client: Socket, gameId: string) {
+  try {
+    const playerColor = this.playerColors[client.id];
+    // Notificar al oponente sobre la oferta de tablas
+    const otherClients = Array.from(this.server.sockets.adapter.rooms.get(gameId) || []);
+    otherClients.forEach(id => {
+      if (id !== client.id) {
+        this.server.to(id).emit('drawOffered', { by: playerColor });
+      }
+    });
+  } catch (error) {
+    client.emit('gameError', error.message);
+  }
+}
+
+@SubscribeMessage('acceptDraw')
+async handleAcceptDraw(client: Socket, gameId: string) {
+  try {
+    const game = await this.gameService.endGameAsDraw(gameId, 'agreement');
+    this.server.to(gameId).emit('gameEnded', {
+      winner: null,
+      reason: 'agreement',
+      isGameOver: true
+    });
+  } catch (error) {
+    client.emit('gameError', error.message);
+  }
+}
 }

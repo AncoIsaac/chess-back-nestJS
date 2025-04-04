@@ -13,17 +13,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  userName     String?
+  password     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  wins         Int      @default(0)
+  losses       Int      @default(0)
+  draws        Int      @default(0)
+  gamesAsfirst Game[]   @relation("firstPlayer")
+  gameAsSecond Game[]   @relation("secondPlayer")
+}
+
 model Game {
-  id       String   @id @default(uuid())
-  fen      String   @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
-  moves    String[]
-  status   GameStatus @default(WAITING)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String     @id @default(uuid())
+  fen            String     @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+  moves          String[]
+  status         GameStatus @default(WAITING)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  firstPlayerId  String?
+  firstPlayer    User?      @relation("firstPlayer", fields: [firstPlayerId], references: [id])
+  secondPlayerId String?
+  secondPlayer   User?      @relation("secondPlayer", fields: [secondPlayerId], references: [id])
 }
 
 enum GameStatus {
   WAITING
   IN_PROGRESS
   FINISHED
+  ABANDONED
 }
