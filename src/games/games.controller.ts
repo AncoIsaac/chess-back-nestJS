@@ -1,15 +1,15 @@
-import { Controller, Get, Post, Param, Body } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Delete } from '@nestjs/common';
 import { GamesService } from './games.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { joinGameDto } from './dto/join-gmae.dto';
 
 @Controller('games')
 export class GamesController {
-  constructor(private readonly gamesService: GamesService) {}
+  constructor(private readonly gamesService: GamesService) { }
 
-  @Post()
-  async create(@Body() data: CreateGameDto) {
-    return this.gamesService.createGame(data);
+  @Get()
+  async getAllGame() {
+    return this.gamesService.getAllGame()
   }
 
   @Get(':id')
@@ -18,7 +18,12 @@ export class GamesController {
   }
 
   @Post('joinGame')
-  async joinGame(@Body() data: joinGameDto) {
-    return this.gamesService.joinGame(data);
+  async joinGame(@Body() id: CreateGameDto) {
+    return this.gamesService.joinGame(id);
+  }
+
+  @Delete(':id')
+  async deleteGame(@Param('id') id: string) {
+    return this.gamesService.deleteGame(id);
   }
 }

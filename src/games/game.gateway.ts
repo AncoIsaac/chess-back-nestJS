@@ -20,7 +20,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
   private playerColors: Record<string, 'w' | 'b'> = {}; // Almacena los colores de los jugadores
 
-  constructor(private readonly gameService: GamesService) {}
+  constructor(private readonly gameService: GamesService) { }
 
   handleConnection(client: Socket) {
     console.log(`Client connected: ${client.id}`);
@@ -40,10 +40,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleJoinGame(client: Socket, gameId: string) {
     client.join(gameId);
     const game = await this.gameService.getGameState(gameId);
-    
+
     // Asignar color aleatorio solo si es el primer jugador
     const playersInRoom = this.server.sockets.adapter.rooms.get(gameId)?.size || 0;
-    
+
     if (playersInRoom === 1) {
       // Primer jugador - asignar color aleatorio
       this.playerColors[client.id] = Math.random() > 0.5 ? 'w' : 'b';
@@ -52,8 +52,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const otherPlayerId = Array.from(this.server.sockets.adapter.rooms.get(gameId) || [])
         .find(id => id !== client.id);
       this.playerColors[client.id] = otherPlayerId && this.playerColors[otherPlayerId] === 'w' ? 'b' : 'w';
+
+      // Notificar a todos en la sala que el segundo jugador se conectó
+      this.server.to(gameId).emit('opponentConnected', {
+        opponentId: client.id,
+        opponentColor: this.playerColors[client.id]
+      });
     }
-    
+
     client.emit('gameState', {
       ...game,
       playerColor: this.playerColors[client.id] || null,
@@ -70,11 +76,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const playerColor = this.playerColors[client.id];
       const game = await this.gameService.getGameState(gameId);
       const chess = new Chess(game.fen);
-      
+
       if (chess.turn() !== playerColor) {
         throw new Error('No es tu turno');
       }
-      
+
       const piece = chess.get(move.from as Square);
       if (!piece || piece.color !== playerColor) {
         throw new Error('No puedes mover piezas del oponente');
@@ -89,47 +95,47 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // game.gateway.ts
 
-@SubscribeMessage('resignGame')
-async handleResign(client: Socket, gameId: string) {
-  try {
-    const playerColor = this.playerColors[client.id];
-    const game = await this.gameService.resignGame(gameId, playerColor);
-    this.server.to(gameId).emit('gameResigned', {
-      winner: playerColor === 'w' ? 'b' : 'w',
-      reason: 'resignation'
-    });
-  } catch (error) {
-    client.emit('gameError', error.message);
+  @SubscribeMessage('resignGame')
+  async handleResign(client: Socket, gameId: string) {
+    try {
+      const playerColor = this.playerColors[client.id];
+      const game = await this.gameService.resignGame(gameId, playerColor);
+      this.server.to(gameId).emit('gameResigned', {
+        winner: playerColor === 'w' ? 'b' : 'w',
+        reason: 'resignation'
+      });
+    } catch (error) {
+      client.emit('gameError', error.message);
+    }
   }
-}
 
-@SubscribeMessage('offerDraw')
-async handleOfferDraw(client: Socket, gameId: string) {
-  try {
-    const playerColor = this.playerColors[client.id];
-    // Notificar al oponente sobre la oferta de tablas
-    const otherClients = Array.from(this.server.sockets.adapter.rooms.get(gameId) || []);
-    otherClients.forEach(id => {
-      if (id !== client.id) {
-        this.server.to(id).emit('drawOffered', { by: playerColor });
-      }
-    });
-  } catch (error) {
-    client.emit('gameError', error.message);
+  @SubscribeMessage('offerDraw')
+  async handleOfferDraw(client: Socket, gameId: string) {
+    try {
+      const playerColor = this.playerColors[client.id];
+      // Notificar al oponente sobre la oferta de tablas
+      const otherClients = Array.from(this.server.sockets.adapter.rooms.get(gameId) || []);
+      otherClients.forEach(id => {
+        if (id !== client.id) {
+          this.server.to(id).emit('drawOffered', { by: playerColor });
+        }
+      });
+    } catch (error) {
+      client.emit('gameError', error.message);
+    }
   }
-}
 
-@SubscribeMessage('acceptDraw')
-async handleAcceptDraw(client: Socket, gameId: string) {
-  try {
-    const game = await this.gameService.endGameAsDraw(gameId, 'agreement');
-    this.server.to(gameId).emit('gameEnded', {
-      winner: null,
-      reason: 'agreement',
-      isGameOver: true
-    });
-  } catch (error) {
-    client.emit('gameError', error.message);
+  @SubscribeMessage('acceptDraw')
+  async handleAcceptDraw(client: Socket, gameId: string) {
+    try {
+      const game = await this.gameService.endGameAsDraw(gameId, 'agreement');
+      this.server.to(gameId).emit('gameEnded', {
+        winner: null,
+        reason: 'agreement',
+        isGameOver: true
+      });
+    } catch (error) {
+      client.emit('gameError', error.message);
+    }
   }
-}
 }

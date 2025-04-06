@@ -4,11 +4,14 @@ import { Chess } from 'chess.js';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Game } from '@prisma/client';
 import { CreateGameDto } from './dto/create-game.dto';
-import { joinGameDto } from './dto/join-gmae.dto';
 
 @Injectable()
 export class GamesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
+
+  async getAllGame() {
+    return await this.prisma.game.findMany()
+  }
 
   async createGame(data: CreateGameDto): Promise<{
     data: Game;
@@ -19,6 +22,7 @@ export class GamesService {
         id: data.firstPlayerId,
       },
     });
+
     if (!user) {
       throw new HttpException(
         {
@@ -27,6 +31,7 @@ export class GamesService {
         },
         HttpStatus.NOT_FOUND,
       );
+
     }
     const game = await this.prisma.game.create({
       data: {
@@ -37,31 +42,100 @@ export class GamesService {
     return { data: game, message: 'Game created' };
   }
 
-  async joinGame(data: joinGameDto): Promise<{ data: Game; message: string }> {
-    const user = await this.prisma.game.findFirst({
-      where: {
-        firstPlayerId: data.playerId,
-      },
+  async joinGame(data: CreateGameDto): Promise<{ data: Game, message: string }> {
+    // 1. Validar que el usuario existe
+    const user = await this.prisma.user.findUnique({
+      where: { id: data.firstPlayerId }
     });
 
-    if (user) {
+    if (!user) {
       throw new HttpException(
-        {
-          status: HttpStatus.NOT_FOUND,
-          error: 'User not join game',
-        },
+        { status: HttpStatus.NOT_FOUND, error: "User not found" },
         HttpStatus.NOT_FOUND,
       );
     }
 
-    const game = await this.prisma.game.update({
-      where: { id: data.gameId },
-      data: { secondPlayerId: data.playerId },
+    // 2. Verificar si el usuario ya tiene partidas activas (no FINISHED)
+    const activeGames = await this.prisma.game.findMany({
+      where: {
+        OR: [
+          { firstPlayerId: data.firstPlayerId },
+          { secondPlayerId: data.firstPlayerId }
+        ],
+        NOT: { status: "FINISHED" }
+      }
     });
+
+    console.log(activeGames);
+
+
+    if (activeGames.length > 0) {
+      throw new HttpException(
+        {
+          status: HttpStatus.BAD_REQUEST,
+          error: "You already have an active game",
+          data: activeGames[0].id
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // 3. Buscar partidas disponibles (WAITING y de otros jugadores)
+    const availableGames = await this.prisma.game.findMany({
+      where: {
+        secondPlayerId: null,
+        status: "WAITING",
+        NOT: { firstPlayerId: data.firstPlayerId } // No unirse a propia partida
+      },
+      orderBy: { createdAt: 'asc' } // Unirse a la partida más antigua primero
+    });
+
+    // 4. Si hay partidas disponibles, unirse a la primera
+    if (availableGames.length > 0) {
+      const gameToJoin = availableGames[0];
+      const updatedGame = await this.prisma.game.update({
+        where: { id: gameToJoin.id },
+        data: {
+          secondPlayerId: data.firstPlayerId,
+          status: "IN_PROGRESS" // Cambiar estado cuando se unen dos jugadores
+        }
+      });
+
+      return {
+        data: updatedGame,
+        message: "Joined existing game successfully"
+      };
+    }
+
+    // 5. Si no hay partidas disponibles, crear una nueva
+    const createGame = await this.createGame(data);
     return {
-      data: game,
-      message: 'Game joined',
+      data: createGame.data,
+      message: "Created new game - waiting for opponent"
     };
+  }
+
+  async deleteGame(id: string): Promise<{ data: Game, message: string }> {
+    const game = await this.prisma.game.findUnique({
+      where: { id }
+    })
+    if (!game) {
+      throw new HttpException({
+        status: HttpStatus.NOT_FOUND,
+        error: "game not found"
+      },
+        HttpStatus.NOT_FOUND
+      )
+    }
+
+    const deleteGame = await this.prisma.game.delete({
+      where: { id }
+    })
+
+    return {
+      data: deleteGame,
+      message: "Delete game successfully"
+    }
   }
 
   async getGameState(gameId: string) {
