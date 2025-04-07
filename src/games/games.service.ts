@@ -148,16 +148,61 @@ export class GamesService {
     return game;
   }
 
+  // async makeMove(gameId: string, moveDto: MoveDto) {
+  //   const gameRecord = await this.prisma.game.findUnique({
+  //     where: { id: gameId },
+  //   });
+
+  //   if (!gameRecord) throw new Error('Game not found');
+
+  //   const chess = new Chess(gameRecord.fen);
+  //   chess.move(moveDto);
+  //   console.log('chess.isGameOver()', chess.isGameOver())
+  //   if (chess.isGameOver()) {
+  //     // Actualizar estadísticas de los jugadores
+      
+  //   }
+
+  //   return this.prisma.game.update({
+  //     where: { id: gameId },
+  //     data: {
+  //       fen: chess.fen(),
+  //       moves: { push: chess.history().pop() },
+  //       status: chess.isGameOver() ? 'FINISHED' : 'IN_PROGRESS',
+  //     },
+  //   });
+  // }
+
+  // games.service.ts
   async makeMove(gameId: string, moveDto: MoveDto) {
     const gameRecord = await this.prisma.game.findUnique({
       where: { id: gameId },
     });
-
+  
     if (!gameRecord) throw new Error('Game not found');
-
+  
     const chess = new Chess(gameRecord.fen);
     chess.move(moveDto);
-
+    
+    if (chess.isGameOver()) {
+      // Determinar el ganador basado en quién dio jaque mate
+      let winner: 'w' | 'b' | null = null;
+      
+      if (chess.isCheckmate()) {
+        // El ganador es el jugador cuyo turno NO es (porque el jaque mate ocurre cuando el jugador actual no puede hacer movimientos)
+        winner = chess.turn() === 'w' ? 'b' : 'w';
+      }
+      
+      // Actualizar estadísticas de los jugadores
+      if (gameRecord.firstPlayerId && gameRecord.secondPlayerId && winner) {
+        await this.updatePlayerStats(
+          gameRecord.firstPlayerId,
+          gameRecord.secondPlayerId,
+          winner
+        );
+      }
+    }
+  
     return this.prisma.game.update({
       where: { id: gameId },
       data: {
@@ -167,9 +212,7 @@ export class GamesService {
       },
     });
   }
-
-  // games.service.ts
-
+  
   async resignGame(gameId: string, resigningPlayerColor: 'w' | 'b') {
     const game = await this.prisma.game.findUnique({
       where: { id: gameId },
