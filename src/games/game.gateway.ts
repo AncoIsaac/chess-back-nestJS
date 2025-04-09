@@ -69,32 +69,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  // @SubscribeMessage('makeMove')
-  // async handleMakeMove(
-  //   client: Socket,
-  //   { gameId, move }: { gameId: string; move: MoveDto },
-  // ) {
-  //   try {
-  //     // Verificar que el jugador está moviendo su propio color
-  //     const playerColor = this.playerColors[client.id];
-  //     const game = await this.gameService.getGameState(gameId);
-  //     const chess = new Chess(game.fen);
-
-  //     if (chess.turn() !== playerColor) {
-  //       throw new Error('No es tu turno');
-  //     }
-
-  //     const piece = chess.get(move.from as Square);
-  //     if (!piece || piece.color !== playerColor) {
-  //       throw new Error('No puedes mover piezas del oponente');
-  //     }
-
-  //     const updatedGame = await this.gameService.makeMove(gameId, move);
-  //     this.server.to(gameId).emit('moveMade', updatedGame);
-  //   } catch (error) {
-  //     client.emit('moveError', error.message);
-  //   }
-  // }
 
   @SubscribeMessage('makeMove')
   async handleMakeMove(
