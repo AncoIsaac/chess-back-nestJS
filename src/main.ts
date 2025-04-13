@@ -6,13 +6,16 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const config = new DocumentBuilder()
-  .setTitle('API de ejemplo')
-  .setDescription('La descripción de la API')
-  .setVersion('1.0')
-  .build();
+    .setTitle('API de ejemplo')
+    .setDescription('La descripción de la API')
+    .setVersion('1.0')
+    .build();
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:5173',
+      'http://localhost:4200',
+    ],
     credentials: true,
   });
 
